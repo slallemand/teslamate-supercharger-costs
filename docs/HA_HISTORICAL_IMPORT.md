@@ -76,7 +76,7 @@ python scripts/export_ha_statistics.py \
 
 ### Output files
 
-- `supercharger_session_cost.csv` — columns: `statistic_id`, `start`, `unit`, `mean`
+- `supercharger_session_cost.csv` — columns: `statistic_id`, `start`, `unit`, `mean`, `min`, `max`
 - `supercharger_total_cost.csv` — columns: `statistic_id`, `start`, `unit`, `sum`, `state`
 
 **Currency:** TeslaMate only stores numeric `cost`, not currency. Use the same unit you configured in the importer (`TARGET_CURRENCY`). Mixed-currency histories must be normalized in TeslaMate first.
@@ -178,6 +178,7 @@ mqtt:
 | Issue | Fix |
 |---|---|
 | Import fails on timestamps | Minutes must be `:00`; the export script rounds to the hour |
+| `mean`, `min`, `max` columns error | Re-export with the latest `export_ha_statistics.py` (all three columns required) |
 | Wrong currency in graphs | Re-export with `--unit` matching your `TARGET_CURRENCY` |
 | Home charges included | Use `--exclude-geofence` with your home geofence name |
 | Gaps in history | Hours without a charge are omitted (expected) |

@@ -52,26 +52,35 @@ The helper script reads `charging_processes` where `cost IS NOT NULL`, rounds ti
 
 ### Run the export
 
-**Important:** the CSV header must include `mean,min,max`. If you only see `mean`, you are running an old script or Docker image. Pull the latest image first:
+**Important:** the CSV header must include `mean,min,max`. If you only see `mean`, Docker is almost certainly running a **cached local image**, not the latest one from GHCR.
+
+`docker pull` alone is not enough when you use `docker compose run` — Compose reuses the image already on the host unless you pull explicitly for that service.
 
 ```bash
-docker pull ghcr.io/slallemand/teslamate-supercharger-costs:latest
+# 1. Wait for the GitHub Actions "Publish Docker image" workflow to finish
+# 2. Pull the image used by your compose service (not just docker pull on the host)
+docker compose pull importer
+
+# 3. Optional: confirm the script inside the GHCR image on the host
+docker run --rm ghcr.io/slallemand/teslamate-supercharger-costs:latest \
+  head -30 /app/scripts/export_ha_statistics.py | grep mean
 ```
 
 #### With Docker (recommended)
 
-The container entrypoint is `importer.py`, so override it to run the export script:
+The container entrypoint is `importer.py`, so override it to run the export script.
+**Always pass `--pull always`** so Compose fetches the latest GHCR image:
 
 ```bash
-docker compose run --rm \
+docker compose run --rm --pull always \
   --entrypoint python \
-  importer scripts/export_ha_statistics.py \
+  importer export_ha_statistics.py \
   --output-dir /data/ha_export \
   --since 2022-01-01 \
   --unit EUR
 ```
 
-(`export_ha_statistics.py` without the `scripts/` prefix also works — it is a symlink to the same file.)
+(`export_ha_statistics.py` at `/app/` is a symlink to `/app/scripts/export_ha_statistics.py`.)
 
 Or with the GHCR image directly:
 
@@ -96,7 +105,7 @@ Session CSV columns: statistic_id,start,unit,mean,min,max
   CSV header: statistic_id,start,unit,mean,min,max
 ```
 
-If the path is not under `/app/scripts/` (or the symlink `/app/export_ha_statistics.py`) or the header lacks `min,max`, the image is outdated — run `docker pull` again after the GitHub Actions build finishes.
+If the path is not under `/app/scripts/` or the header lacks `min,max`, run `docker compose pull importer` and use `--pull always` on the next `docker compose run`.
 
 Verify the header before copying to Home Assistant:
 

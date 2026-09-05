@@ -1,6 +1,6 @@
 # TeslaMate Supercharger Cost Importer
 
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/YOUR_USERNAME/teslamate-supercharger-costs/pkgs/container/teslamate-supercharger-costs)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/slallemand/teslamate-supercharger-costs/pkgs/container/teslamate-supercharger-costs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)](https://www.python.org)
 
@@ -40,6 +40,7 @@ Tesla API  ──►  importer.py  ──►  TeslaMate PostgreSQL
 - A running **TeslaMate** instance (Docker Compose)
 - A **Tesla account** with at least one vehicle
 - Docker + Docker Compose on your server
+- Pre-built image: `ghcr.io/slallemand/teslamate-supercharger-costs:latest` ([GHCR setup / CI troubleshooting](docs/GHCR_SETUP.md))
 
 ---
 

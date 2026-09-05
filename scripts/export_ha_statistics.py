@@ -105,44 +105,40 @@ def fetch_sessions(since: datetime | None, until: datetime | None, exclude_geofe
         conn.close()
 
 
-def aggregate_hourly(rows: list[tuple]) -> list[tuple[datetime, float, float, float]]:
-    """Sum costs per UTC hour; track min/max per session for Import Statistics."""
-    hourly: dict[datetime, list[float]] = defaultdict(list)
+def aggregate_hourly(rows: list[tuple]) -> list[tuple[datetime, float]]:
+    """Sum costs per UTC hour (Import Statistics requires hourly timestamps)."""
+    hourly: dict[datetime, float] = defaultdict(float)
     for start_date, cost, _location, _geofence in rows:
         hour = _round_to_hour(start_date)
-        hourly[hour].append(float(cost))
-
-    result: list[tuple[datetime, float, float, float]] = []
-    for hour in sorted(hourly):
-        costs = hourly[hour]
-        total = sum(costs)
-        result.append((hour, total, min(costs), max(costs)))
-    return result
+        hourly[hour] += float(cost)
+    return sorted(hourly.items())
 
 
-def write_session_csv(path: Path, hourly: list[tuple[datetime, float, float, float]], unit: str, stat_id: str) -> None:
+def write_session_csv(path: Path, hourly: list[tuple[datetime, float]], unit: str, stat_id: str) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         # Import Statistics requires mean, min, and max together for measurements.
+        # Per hour we export the total spent; min=max=mean avoids inconsistent
+        # values when multiple sessions fall in the same hour.
         writer.writerow(["statistic_id", "start", "unit", "mean", "min", "max"])
-        for hour, mean, min_val, max_val in hourly:
+        for hour, total in hourly:
             writer.writerow([
                 stat_id,
                 hour.strftime("%Y-%m-%d %H:%M"),
                 unit,
-                f"{mean:.4f}",
-                f"{min_val:.4f}",
-                f"{max_val:.4f}",
+                f"{total:.4f}",
+                f"{total:.4f}",
+                f"{total:.4f}",
             ])
 
 
-def write_total_csv(path: Path, hourly: list[tuple[datetime, float, float, float]], unit: str, stat_id: str) -> None:
+def write_total_csv(path: Path, hourly: list[tuple[datetime, float]], unit: str, stat_id: str) -> None:
     cumulative = 0.0
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["statistic_id", "start", "unit", "sum", "state"])
-        for hour, mean, _min_val, _max_val in hourly:
-            cumulative += mean
+        for hour, total in hourly:
+            cumulative += total
             writer.writerow([
                 stat_id,
                 hour.strftime("%Y-%m-%d %H:%M"),
@@ -201,7 +197,7 @@ def main() -> None:
     write_session_csv(session_path, hourly, args.unit, args.session_statistic_id)
     write_total_csv(total_path, hourly, args.unit, args.total_statistic_id)
 
-    total_cost = sum(mean for _, mean, _, _ in hourly)
+    total_cost = sum(total for _, total in hourly)
     print(f"Exported {len(rows)} session(s) -> {len(hourly)} hourly bucket(s)")
     print(f"  Total cost: {total_cost:.2f} {args.unit}")
     print(f"  Session CSV: {session_path}")

@@ -76,7 +76,7 @@ python scripts/export_ha_statistics.py \
 
 ### Output files
 
-- `supercharger_session_cost.csv` — columns: `statistic_id`, `start`, `unit`, `mean`, `min`, `max`
+- `supercharger_session_cost.csv` — columns: `statistic_id`, `start`, `unit`, `mean`, `min`, `max` (identical per hour = total spent that hour)
 - `supercharger_total_cost.csv` — columns: `statistic_id`, `start`, `unit`, `sum`, `state`
 
 **Currency:** TeslaMate only stores numeric `cost`, not currency. Use the same unit you configured in the importer (`TARGET_CURRENCY`). Mixed-currency histories must be normalized in TeslaMate first.

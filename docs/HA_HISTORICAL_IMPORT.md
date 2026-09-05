@@ -71,6 +71,8 @@ docker compose run --rm \
   --unit EUR
 ```
 
+(`export_ha_statistics.py` without the `scripts/` prefix also works — it is a symlink to the same file.)
+
 Or with the GHCR image directly:
 
 ```bash
@@ -94,7 +96,7 @@ Session CSV columns: statistic_id,start,unit,mean,min,max
   CSV header: statistic_id,start,unit,mean,min,max
 ```
 
-If the path is not under `/app/scripts/` or the header lacks `min,max`, you are not running the image script (old bind-mount or host copy).
+If the path is not under `/app/scripts/` (or the symlink `/app/export_ha_statistics.py`) or the header lacks `min,max`, the image is outdated — run `docker pull` again after the GitHub Actions build finishes.
 
 Verify the header before copying to Home Assistant:
 

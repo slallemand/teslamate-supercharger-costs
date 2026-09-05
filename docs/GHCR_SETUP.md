@@ -4,39 +4,87 @@ Images are built by [`.github/workflows/docker-publish.yml`](../.github/workflow
 
 `ghcr.io/slallemand/teslamate-supercharger-costs`
 
-## If the workflow fails with `write_package` denied
+## About `GITHUB_TOKEN` (automatic)
 
-GitHub is blocking the push to the Container Registry. Fix **one** of the following.
+Yes — GitHub Actions **automatically** provides `secrets.GITHUB_TOKEN` for every workflow run. You do not create or store it yourself. The workflow already uses it:
 
-### Option A — Allow GITHUB_TOKEN to write (recommended)
+```yaml
+password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+```
 
-1. Open **https://github.com/slallemand/teslamate-supercharger-costs/settings/actions**
-2. Under **Workflow permissions**, select **Read and write permissions**
-3. Click **Save**
-4. Re-run the failed workflow (**Actions → Publish Docker image → Re-run all jobs**)
+So login is not the problem. The failure `denied: write_package` means GitHub **refuses** that token for writing to the Container Registry, even when:
 
-If this repository is under an organization, an org admin must change the same setting under **Organization → Settings → Actions**.
+- the workflow declares `packages: write`, and
+- the repository is set to **Read and write permissions**.
 
-### Option B — Use a Personal Access Token (PAT)
+This is common on **forked repositories** (this repo is a fork of `kalich5/teslamate-supercharger-costs`). `GITHUB_TOKEN` can build the image but is often blocked from creating/updating GHCR packages.
 
-Use this when Option A is not available (org policy, etc.).
+**Reliable fix: add a Personal Access Token (PAT) as `GHCR_TOKEN`** (Option B below).
 
-1. Create a **classic** PAT at **https://github.com/settings/tokens**
-   - Scopes: `write:packages`, `read:packages`, and `repo` (if the repository is private)
-2. In the repository, go to **Settings → Secrets and variables → Actions**
-3. Add a repository secret named **`GHCR_TOKEN`** with the PAT value
-4. Re-run the workflow
+---
 
-The workflow uses `GHCR_TOKEN` when set, otherwise falls back to `GITHUB_TOKEN`.
+## Option B — PAT as `GHCR_TOKEN` (recommended)
+
+### 1. Create a classic PAT
+
+1. Open **https://github.com/settings/tokens**
+2. **Generate new token (classic)**
+3. Scopes:
+   - `write:packages`
+   - `read:packages`
+   - `repo` (only if this repository is **private**)
+4. Generate and copy the token
+
+### 2. Add it as a repository secret
+
+1. Open **https://github.com/slallemand/teslamate-supercharger-costs/settings/secrets/actions**
+2. **New repository secret**
+3. Name: **`GHCR_TOKEN`**
+4. Value: paste the PAT
+5. Save
+
+### 3. Re-run the workflow
+
+**Actions → Publish Docker image → Re-run all jobs**
+
+The workflow prefers `GHCR_TOKEN` over `GITHUB_TOKEN` when both exist.
+
+---
+
+## Option A — `GITHUB_TOKEN` only (often insufficient)
+
+If you want to try again without a PAT:
+
+### Repository setting
+
+**https://github.com/slallemand/teslamate-supercharger-costs/settings/actions**
+
+→ **Workflow permissions** → **Read and write permissions** → Save
+
+### Account setting (personal repos only)
+
+Also check **https://github.com/settings/actions**
+
+→ **Workflow permissions** → **Read and write permissions**
+
+GitHub uses the **most restrictive** limit across workflow file, repository, and account settings.
+
+### Orphan GHCR package
+
+A failed first publish can leave a package that is not linked to this repository.
+
+1. Open **https://github.com/users/slallemand/packages/container/teslamate-supercharger-costs/settings**
+2. Either **Connect repository** → `slallemand/teslamate-supercharger-costs`
+3. Or **Delete this package** and re-run the workflow
+
+---
 
 ## Make the package public (optional)
 
 After the first successful publish:
 
-1. Open **https://github.com/users/slallemand/packages/container/teslamate-supercharger-costs**
+1. **https://github.com/users/slallemand/packages/container/teslamate-supercharger-costs**
 2. **Package settings → Change visibility → Public**
-
-Then anyone can pull without logging in:
 
 ```bash
 docker pull ghcr.io/slallemand/teslamate-supercharger-costs:latest

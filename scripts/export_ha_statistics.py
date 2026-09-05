@@ -48,6 +48,7 @@ DB_PASS = _cfg("TESLAMATE_DB_PASS", required=True)
 DEFAULT_UNIT = (_cfg("TARGET_CURRENCY", "") or "EUR").upper().strip()
 SESSION_STAT_ID = "tesla:supercharger_session_cost"
 TOTAL_STAT_ID = "tesla:supercharger_total_cost"
+SESSION_CSV_COLUMNS = ["statistic_id", "start", "unit", "mean", "min", "max"]
 
 
 def _round_to_hour(dt: datetime) -> datetime:
@@ -120,7 +121,7 @@ def write_session_csv(path: Path, hourly: list[tuple[datetime, float]], unit: st
         # Import Statistics requires mean, min, and max together for measurements.
         # Per hour we export the total spent; min=max=mean avoids inconsistent
         # values when multiple sessions fall in the same hour.
-        writer.writerow(["statistic_id", "start", "unit", "mean", "min", "max"])
+        writer.writerow(SESSION_CSV_COLUMNS)
         for hour, total in hourly:
             writer.writerow([
                 stat_id,
@@ -183,6 +184,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    print(f"Export script: {Path(__file__).resolve()}")
+    print(f"Session CSV columns: {','.join(SESSION_CSV_COLUMNS)}")
+
     rows = fetch_sessions(args.since, args.until, args.exclude_geofence)
     if not rows:
         print("No charging sessions with cost found.")
@@ -197,8 +201,15 @@ def main() -> None:
     write_session_csv(session_path, hourly, args.unit, args.session_statistic_id)
     write_total_csv(total_path, hourly, args.unit, args.total_statistic_id)
 
+    with session_path.open(encoding="utf-8") as f:
+        header = f.readline().strip()
+    if header != ",".join(SESSION_CSV_COLUMNS):
+        print(f"ERROR: unexpected CSV header: {header!r}", file=sys.stderr)
+        sys.exit(1)
+
     total_cost = sum(total for _, total in hourly)
     print(f"Exported {len(rows)} session(s) -> {len(hourly)} hourly bucket(s)")
+    print(f"  CSV header: {header}")
     print(f"  Total cost: {total_cost:.2f} {args.unit}")
     print(f"  Session CSV: {session_path}")
     print(f"  Total CSV:   {total_path}")

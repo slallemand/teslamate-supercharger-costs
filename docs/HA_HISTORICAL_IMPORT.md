@@ -74,6 +74,8 @@ docker compose run --rm \
 Or with the GHCR image directly:
 
 ```bash
+docker pull ghcr.io/slallemand/teslamate-supercharger-costs:latest
+
 docker run --rm --env-file .env \
   -v ./data:/data \
   --entrypoint python \
@@ -83,6 +85,16 @@ docker run --rm --env-file .env \
   --since 2022-01-01 \
   --unit EUR
 ```
+
+The script prints its path and the CSV header on success. You should see:
+
+```text
+Export script: /app/scripts/export_ha_statistics.py
+Session CSV columns: statistic_id,start,unit,mean,min,max
+  CSV header: statistic_id,start,unit,mean,min,max
+```
+
+If the path is not under `/app/scripts/` or the header lacks `min,max`, you are not running the image script (old bind-mount or host copy).
 
 Verify the header before copying to Home Assistant:
 

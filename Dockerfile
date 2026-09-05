@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY importer.py .
-COPY scripts/ .
+COPY scripts/ ./scripts/
 
 # Persistent volumes for token cache and logs
 VOLUME ["/data", "/logs"]

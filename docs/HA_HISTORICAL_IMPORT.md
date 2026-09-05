@@ -52,6 +52,47 @@ The helper script reads `charging_processes` where `cost IS NOT NULL`, rounds ti
 
 ### Run the export
 
+**Important:** the CSV header must include `mean,min,max`. If you only see `mean`, you are running an old script or Docker image. Pull the latest image first:
+
+```bash
+docker pull ghcr.io/slallemand/teslamate-supercharger-costs:latest
+```
+
+#### With Docker (recommended)
+
+The container entrypoint is `importer.py`, so override it to run the export script:
+
+```bash
+docker compose run --rm \
+  --entrypoint python \
+  importer scripts/export_ha_statistics.py \
+  --output-dir /data/ha_export \
+  --since 2022-01-01 \
+  --unit EUR
+```
+
+Or with the GHCR image directly:
+
+```bash
+docker run --rm --env-file .env \
+  -v ./data:/data \
+  --entrypoint python \
+  ghcr.io/slallemand/teslamate-supercharger-costs:latest \
+  scripts/export_ha_statistics.py \
+  --output-dir /data/ha_export \
+  --since 2022-01-01 \
+  --unit EUR
+```
+
+Verify the header before copying to Home Assistant:
+
+```bash
+head -1 /data/ha_export/supercharger_session_cost.csv
+# Expected: statistic_id,start,unit,mean,min,max
+```
+
+#### Without Docker
+
 ```bash
 cd teslamate-supercharger-costs
 export $(grep -v '^#' .env | xargs)

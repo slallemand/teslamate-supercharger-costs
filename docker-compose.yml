@@ -15,7 +15,7 @@
 services:
 
   importer:
-    image: ghcr.io/YOUR_USERNAME/teslamate-supercharger-costs:latest
+    image: ghcr.io/slallemand/teslamate-supercharger-costs:latest
     # Or build locally:
     # build: .
     container_name: teslamate-suc-importer

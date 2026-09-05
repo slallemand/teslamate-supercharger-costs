@@ -31,6 +31,7 @@ Tesla API  ──►  importer.py  ──►  TeslaMate PostgreSQL
 - ✅ `--dry-run` mode — preview everything before writing
 - ✅ Runs as a lightweight Docker container via cron
 - ✅ Per-vehicle import via required `TESLA_VIN` (ownership API no longer exposes a vehicle list)
+- ✅ Optional MQTT publish to Home Assistant when a session gets its cost for the first time
 
 ---
 
@@ -237,6 +238,12 @@ All settings are environment variables. Set them in your `.env` file.
 | `TIME_TOLERANCE_S` | | `120` | Max seconds difference for start-time matching |
 | `OVERWRITE_EXISTING` | | `false` | Set `true` to overwrite already-set costs |
 | `LOG_FILE` | | `/logs/importer.log` | Log file path inside the container |
+| `MQTT_ENABLED` | | `false` | Publish new session costs to MQTT |
+| `MQTT_HOST` | | — | MQTT broker hostname (required when enabled) |
+| `MQTT_PORT` | | `1883` | MQTT broker port |
+| `MQTT_USER` | | — | MQTT username (optional) |
+| `MQTT_PASSWORD` | | — | MQTT password (optional) |
+| `MQTT_TOPIC` | | `teslamate/cars/1/supercharger_cost` | Topic for JSON payload |
 
 ---
 
@@ -275,6 +282,85 @@ If you see many **NOT FOUND** warnings, try increasing `TIME_TOLERANCE_S` to `30
 
 ---
 
+## MQTT / Home Assistant
+
+When `MQTT_ENABLED=true` **and** `MQTT_HOST` is set, the importer publishes a JSON message **only when a charging session receives its cost for the first time** (`cost` was previously `NULL`). If MQTT is not configured (default), the importer works exactly as before — TeslaMate import is unaffected.
+
+### Environment
+
+```dotenv
+MQTT_ENABLED=true
+MQTT_HOST=mosquitto
+MQTT_PORT=1883
+MQTT_TOPIC=teslamate/cars/1/supercharger_cost
+```
+
+Use the hostname of your MQTT broker on the same Docker network as the importer (e.g. Mosquitto or the Home Assistant Mosquitto add-on).
+
+### MQTT payload
+
+Each message is a retained JSON object:
+
+```json
+{
+  "charging_process_id": 42,
+  "cost": 22.02,
+  "currency": "EUR",
+  "kwh": 55.435,
+  "rate": 0.42,
+  "location": "Angers Espace Anjou",
+  "start_date": "2025-11-01 18:13:00"
+}
+```
+
+| Field | Source |
+|---|---|
+| `cost`, `start_date` | `charging_processes` |
+| `location` | `addresses.display_name` (TeslaMate geocoding) |
+| `kwh` | `charge_energy_added` from TeslaMate; Tesla API billing kWh as fallback |
+| `rate` | `cost / kwh` when kWh > 0; else Tesla API rate from import |
+| `currency` | `TARGET_CURRENCY` if set; else Tesla API currency (not stored in TeslaMate) |
+
+### Home Assistant sensor
+
+Add to `configuration.yaml`:
+
+```yaml
+mqtt:
+  sensor:
+    - name: "Tesla Last Supercharge"
+      unique_id: teslamate_supercharger_last_cost
+      state_topic: "teslamate/cars/1/supercharger_cost"
+      value_template: "{{ value_json.cost }}"
+      unit_of_measurement: "{{ value_json.currency }}"
+      device_class: monetary
+      icon: mdi:ev-station
+      json_attributes_topic: "teslamate/cars/1/supercharger_cost"
+```
+
+### Query from TeslaMate database
+
+```sql
+SELECT cp.id,
+       cp.start_date,
+       cp.cost,
+       cp.charge_energy_added AS kwh,
+       COALESCE(a.display_name, a.name) AS location
+FROM   charging_processes cp
+LEFT JOIN addresses a ON a.id = cp.address_id
+WHERE  cp.cost IS NOT NULL
+ORDER BY cp.start_date DESC
+LIMIT 1;
+```
+
+Currency is not stored in TeslaMate — it is only available in the MQTT message or via `TARGET_CURRENCY`.
+
+### Historical backfill (one-time)
+
+To import **past** session costs into Home Assistant charts and cumulative totals, see [docs/HA_HISTORICAL_IMPORT.md](docs/HA_HISTORICAL_IMPORT.md). This uses a CSV export from TeslaMate and the Import Statistics HACS integration — no SQL writes to the HA database.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -284,6 +370,8 @@ If you see many **NOT FOUND** warnings, try increasing `TIME_TOLERANCE_S` to `30
 | `Connection refused` on DB | Wrong network or host name | Run `docker network ls` and update the network name in `docker-compose.yml` |
 | Sessions with cost already set are skipped | Expected behaviour | Set `OVERWRITE_EXISTING=true` to force re-import |
 | No sessions / wrong vehicle | Typo in `TESLA_VIN` | Double-check VIN in Tesla app or TeslaMate, then re-run with `--verbose` |
+| MQTT not publishing | `MQTT_ENABLED` false or no new sessions | Enable MQTT; only first-time cost writes trigger publish |
+| HA sensor empty after restart | Broker has no retained message | Wait for next new charge, or check `MQTT_HOST` / topic |
 
 ---
 

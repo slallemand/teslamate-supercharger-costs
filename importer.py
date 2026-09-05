@@ -8,6 +8,9 @@ and writes them into TeslaMate's PostgreSQL database automatically.
 Optionally converts all costs to a target currency using live exchange
 rates from the European Central Bank (no API key required).
 
+Optionally publishes new Supercharger session costs to MQTT for
+Home Assistant integration.
+
 Configuration is done via environment variables or a .env file.
 See .env.example for all available options.
 """
@@ -91,6 +94,20 @@ TESLA_API_TIMEOUT  = int(_cfg("TESLA_API_TIMEOUT", "30"))
 # Uses live rates from the European Central Bank (updated daily, no API key needed).
 # Leave empty to store costs in their original currency (no conversion).
 TARGET_CURRENCY    = (_cfg("TARGET_CURRENCY", "") or "").upper().strip()
+
+# MQTT — publish new session costs to Home Assistant (optional).
+MQTT_ENABLED       = _cfg("MQTT_ENABLED", "false").lower() == "true"
+MQTT_HOST          = _cfg("MQTT_HOST", "")
+MQTT_PORT          = int(_cfg("MQTT_PORT", "1883"))
+MQTT_USER          = _cfg("MQTT_USER", "")
+MQTT_PASSWORD      = _cfg("MQTT_PASSWORD", "") or _cfg("MQTT_PASS", "")
+MQTT_TOPIC         = _cfg("MQTT_TOPIC", "teslamate/cars/1/supercharger_cost")
+
+
+def mqtt_active() -> bool:
+    """True when MQTT publishing is explicitly enabled and a broker is configured."""
+    return MQTT_ENABLED and bool(MQTT_HOST)
+
 
 log = setup_logging(LOG_FILE)
 
@@ -340,7 +357,8 @@ def extract_cost(session: dict) -> dict | None:
     """
     Parse the fees array of a Tesla session and return cost details.
 
-    Returns None for free Supercharging sessions or sessions with no fees.
+    Returns None when the session has no fees array (unknown / not billable).
+    Returns a zero-cost dict for free Supercharging (referral, promotions).
 
     The Tesla API returns two fee types:
       - CHARGING:   energy cost (per kWh or per minute)
@@ -372,12 +390,9 @@ def extract_cost(session: dict) -> dict | None:
             congestion_due = due
 
     original_total    = round(charging_due + congestion_due, 2)
-    original_currency = currency or "?"
+    original_currency = currency or TARGET_CURRENCY or "?"
 
-    if original_total == 0.0:
-        return None  # Free Supercharging or genuinely zero charge
-
-    # Convert to target currency if configured
+    # Convert to target currency if configured (including 0.00 sessions)
     converted_total, final_currency = convert_currency(original_total, original_currency)
 
     return {
@@ -481,6 +496,112 @@ def _detect_start_date_timezone(cur) -> str:
         return "UTC"
 
 
+def _format_start_date(start_date) -> str:
+    """Format a TeslaMate start_date for MQTT / JSON output."""
+    if start_date is None:
+        return ""
+    if getattr(start_date, "tzinfo", None) is not None:
+        return start_date.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return start_date.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fetch_cost_details(cur, process_ids: list[int], session_cache: dict[int, dict]) -> list[dict]:
+    """
+    Load newly updated charging sessions from TeslaMate and build MQTT payloads.
+
+    cost, start_date, and location come from the database. kwh and rate are
+    derived from charge_energy_added when available; currency uses TARGET_CURRENCY
+    or the Tesla API value cached during import.
+    """
+    if not process_ids:
+        return []
+
+    cur.execute("""
+        SELECT cp.id,
+               cp.start_date,
+               cp.cost,
+               cp.charge_energy_added,
+               COALESCE(a.display_name, a.name, 'unknown') AS location
+        FROM   charging_processes cp
+        LEFT JOIN addresses a ON a.id = cp.address_id
+        WHERE  cp.id = ANY(%s)
+        ORDER BY cp.start_date ASC
+    """, (process_ids,))
+
+    payloads: list[dict] = []
+    for tm_id, start_date, cost, charge_energy_added, location in cur.fetchall():
+        cached = session_cache.get(tm_id, {})
+        cost_f = float(cost) if cost is not None else 0.0
+
+        if charge_energy_added is not None:
+            kwh = float(charge_energy_added)
+        else:
+            kwh = float(cached.get("kwh") or 0)
+
+        if kwh > 0:
+            rate = round(cost_f / kwh, 4)
+        else:
+            rate = float(cached.get("rate") or 0)
+
+        currency = TARGET_CURRENCY or cached.get("currency") or "?"
+
+        payloads.append({
+            "charging_process_id": tm_id,
+            "cost":                cost_f,
+            "currency":            currency,
+            "kwh":                 round(kwh, 3),
+            "rate":                rate,
+            "location":            location,
+            "start_date":          _format_start_date(start_date),
+        })
+
+    return payloads
+
+
+def publish_new_sessions_to_mqtt(sessions: list[dict]) -> int:
+    """
+    Publish each new session cost as JSON to MQTT (retained).
+    Returns the number of messages published.
+    """
+    if not sessions or not mqtt_active():
+        return 0
+
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        log.error(
+            "MQTT is enabled but paho-mqtt is not installed — "
+            "run: pip install paho-mqtt"
+        )
+        return 0
+
+    published = 0
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        if MQTT_USER:
+            client.username_pw_set(MQTT_USER, MQTT_PASSWORD or None)
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+
+        for session in sessions:
+            payload = json.dumps(session)
+            result = client.publish(MQTT_TOPIC, payload, retain=True)
+            result.wait_for_publish(timeout=10)
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                log.error(f"MQTT publish failed for #{session['charging_process_id']}: rc={result.rc}")
+                continue
+            published += 1
+            log.info(
+                f"  MQTT: Published #{session['charging_process_id']} "
+                f"{session['cost']:.2f} {session['currency']} @ {session['location']}"
+            )
+
+        client.disconnect()
+    except Exception as e:
+        log.error(f"MQTT publish failed: {e}")
+
+    return published
+
+
 def import_to_teslamate(sessions: list[dict], dry_run: bool, lookback_days: int) -> dict:
     """
     Match each Tesla session against TeslaMate's charging_processes table
@@ -489,7 +610,8 @@ def import_to_teslamate(sessions: list[dict], dry_run: bool, lookback_days: int)
     Each successful UPDATE is committed immediately so that a DB error on one
     row does not roll back previously written costs.
 
-    Returns a summary dict with counts of outcomes.
+    Returns a summary dict with counts of outcomes and optional new_sessions
+    for MQTT publishing.
     """
     stats = {
         "total":        len(sessions),
@@ -500,7 +622,12 @@ def import_to_teslamate(sessions: list[dict], dry_run: bool, lookback_days: int)
         "updated":      0,
         "would_update": 0,
         "errors":       0,
+        "new_sessions": [],
+        "mqtt_published": 0,
     }
+
+    new_process_ids: list[int] = []
+    session_cache: dict[int, dict] = {}
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
@@ -574,6 +701,7 @@ def import_to_teslamate(sessions: list[dict], dry_run: bool, lookback_days: int)
                 continue
 
             tm_id, tm_start, tm_cost = row
+            was_new = tm_cost is None
 
             if tm_cost is not None and not OVERWRITE_EXISTING:
                 log.debug(
@@ -614,10 +742,24 @@ def import_to_teslamate(sessions: list[dict], dry_run: bool, lookback_days: int)
                 log.info(f"  UPDATED    #{tm_id}  {tm_start:%Y-%m-%d %H:%M}  "
                          f"{location}  {cost_str}{kwh_str}")
                 stats["updated"] += 1
+
+                if was_new:
+                    new_process_ids.append(tm_id)
+                    session_cache[tm_id] = {
+                        "currency": cost_info["currency"],
+                        "kwh":      cost_info["kwh"],
+                        "rate":     cost_info["rate"],
+                    }
             except Exception as e:
                 log.error(f"DB error updating #{tm_id}: {e}")
                 conn.rollback()
                 stats["errors"] += 1
+
+        if new_process_ids and not dry_run and mqtt_active():
+            new_sessions = _fetch_cost_details(cur, new_process_ids, session_cache)
+            stats["new_sessions"] = new_sessions
+            if new_sessions:
+                stats["mqtt_published"] = publish_new_sessions_to_mqtt(new_sessions)
 
         cur.close()
     finally:
@@ -641,6 +783,8 @@ def log_summary(stats: dict, dry_run: bool) -> None:
         log.info(f"  Would be updated:           {stats['would_update']}")
     else:
         log.info(f"  Updated:                    {stats['updated']}")
+    if stats.get("mqtt_published"):
+        log.info(f"  Published to MQTT:          {stats['mqtt_published']}")
     if stats["errors"]:
         log.warning(f"  Errors:                     {stats['errors']}")
     log.info("-" * 55)
@@ -693,6 +837,10 @@ Examples:
         log.info(f"  Currency:  converting all costs -> {TARGET_CURRENCY} (ECB live rates)")
     else:
         log.info(f"  Currency:  storing in original currency (no conversion)")
+    if mqtt_active():
+        log.info(f"  MQTT:      {MQTT_HOST}:{MQTT_PORT} -> {MQTT_TOPIC}")
+    elif MQTT_ENABLED and not MQTT_HOST:
+        log.warning("  MQTT:      enabled but MQTT_HOST is not set — publishing disabled")
     if args.dry_run:
         log.info("  Mode:      DRY-RUN (no writes)")
     log.info("=" * 55)

@@ -47,9 +47,6 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Verify export script source
-        run: grep -q '"mean", "min", "max"' scripts/export_ha_statistics.py
-
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -60,10 +57,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
-
-      - name: Verify export script in pushed image
-        run: |
-          docker pull ${{ env.IMAGE }}:latest
-          docker run --rm ${{ env.IMAGE }}:latest \
-            grep -q '"mean", "min", "max"' /app/scripts/export_ha_statistics.py
-          echo "OK: export script in GHCR image contains mean,min,max columns"

@@ -52,27 +52,14 @@ The helper script reads `charging_processes` where `cost IS NOT NULL`, rounds ti
 
 ### Run the export
 
-**Important:** the CSV header must include `mean,min,max`. If you only see `mean`, Docker is almost certainly running a **cached local image**, not the latest one from GHCR.
-
-`docker pull` alone is not enough when you use `docker compose run` — Compose reuses the image already on the host unless you pull explicitly for that service.
-
-```bash
-# 1. Wait for the GitHub Actions "Publish Docker image" workflow to finish
-# 2. Pull the image used by your compose service (not just docker pull on the host)
-docker compose pull importer
-
-# 3. Optional: confirm the script inside the GHCR image on the host
-docker run --rm ghcr.io/slallemand/teslamate-supercharger-costs:latest \
-  head -30 /app/scripts/export_ha_statistics.py | grep mean
-```
+Both CSV files use the same columns: `statistic_id,start,unit,mean,min,max`.
 
 #### With Docker (recommended)
 
-The container entrypoint is `importer.py`, so override it to run the export script.
-**Always pass `--pull always`** so Compose fetches the latest GHCR image:
+The container entrypoint is `importer.py`, so override it to run the export script:
 
 ```bash
-docker compose run --rm --pull always \
+docker compose run --rm \
   --entrypoint python \
   importer export_ha_statistics.py \
   --output-dir /data/ha_export \
@@ -82,7 +69,7 @@ docker compose run --rm --pull always \
 
 (`export_ha_statistics.py` at `/app/` is a symlink to `/app/scripts/export_ha_statistics.py`.)
 
-Or with the GHCR image directly:
+Or with the GHCR image directly (only DB env vars are required, not Tesla credentials):
 
 ```bash
 docker pull ghcr.io/slallemand/teslamate-supercharger-costs:latest
@@ -91,7 +78,7 @@ docker run --rm --env-file .env \
   -v ./data:/data \
   --entrypoint python \
   ghcr.io/slallemand/teslamate-supercharger-costs:latest \
-  scripts/export_ha_statistics.py \
+  export_ha_statistics.py \
   --output-dir /data/ha_export \
   --since 2022-01-01 \
   --unit EUR
@@ -101,17 +88,16 @@ The script prints its path and the CSV header on success. You should see:
 
 ```text
 Export script: /app/scripts/export_ha_statistics.py
-Session CSV columns: statistic_id,start,unit,mean,min,max
+CSV columns: statistic_id,start,unit,mean,min,max
   CSV header: statistic_id,start,unit,mean,min,max
 ```
 
-If the path is not under `/app/scripts/` or the header lacks `min,max`, run `docker compose pull importer` and use `--pull always` on the next `docker compose run`.
-
-Verify the header before copying to Home Assistant:
+Verify both headers before copying to Home Assistant:
 
 ```bash
 head -1 /data/ha_export/supercharger_session_cost.csv
-# Expected: statistic_id,start,unit,mean,min,max
+head -1 /data/ha_export/supercharger_total_cost.csv
+# Expected for both: statistic_id,start,unit,mean,min,max
 ```
 
 #### Without Docker
@@ -140,8 +126,10 @@ python scripts/export_ha_statistics.py \
 
 ### Output files
 
-- `supercharger_session_cost.csv` — columns: `statistic_id`, `start`, `unit`, `mean`, `min`, `max` (identical per hour = total spent that hour)
-- `supercharger_total_cost.csv` — columns: `statistic_id`, `start`, `unit`, `sum`, `state`
+Both files use the same columns: `statistic_id`, `start`, `unit`, `mean`, `min`, `max`.
+
+- `supercharger_session_cost.csv` — `mean` = `min` = `max` = total spent that hour
+- `supercharger_total_cost.csv` — `mean` = `min` = `max` = cumulative total spent up to that hour
 
 **Currency:** TeslaMate only stores numeric `cost`, not currency. Use the same unit you configured in the importer (`TARGET_CURRENCY`). Mixed-currency histories must be normalized in TeslaMate first.
 
@@ -242,7 +230,7 @@ mqtt:
 | Issue | Fix |
 |---|---|
 | Import fails on timestamps | Minutes must be `:00`; the export script rounds to the hour |
-| `mean`, `min`, `max` columns error | Re-export with the latest `export_ha_statistics.py` (all three columns required) |
+| `mean`, `min`, `max` columns error | Re-export with the latest image; both CSV files need all three columns |
 | Wrong currency in graphs | Re-export with `--unit` matching your `TARGET_CURRENCY` |
 | Home charges included | Use `--exclude-geofence` with your home geofence name |
 | Gaps in history | Hours without a charge are omitted (expected) |

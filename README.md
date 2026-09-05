@@ -30,7 +30,7 @@ Tesla API  ──►  importer.py  ──►  TeslaMate PostgreSQL
 - ✅ Safe by default — skips sessions that already have a cost
 - ✅ `--dry-run` mode — preview everything before writing
 - ✅ Runs as a lightweight Docker container via cron
-- ✅ Supports multiple vehicles via `TESLA_VIN`
+- ✅ Per-vehicle import via required `TESLA_VIN` (ownership API no longer exposes a vehicle list)
 
 ---
 
@@ -69,6 +69,7 @@ And at the end of the file (before networks:) insert:
       - database
     environment:
       TESLA_EMAIL: email@email.cz
+      TESLA_VIN: 5YJ3E7EB0KF000000
       TESLA_CACHE_FILE: /data/tesla_cache.json
       TESLAMATE_DB_HOST: database
       TESLAMATE_DB_PORT: 5432
@@ -148,7 +149,7 @@ Example output:
 2025-11-01 18:15:00  INFO       Lookback:  30 days  |  Tolerance: 120s
 2025-11-01 18:15:00  INFO       Mode:      DRY-RUN (no writes)
 2025-11-01 18:15:00  INFO     ═══════════════════════════════════════════════════════
-2025-11-01 18:15:01  INFO     Vehicle: My Tesla (VIN: 5YJSA7E52PF497955)
+2025-11-01 18:15:01  INFO     Using configured VIN: 5YJSA7E52PF497955
 2025-11-01 18:15:02  INFO     Retrieved 6 sessions from Tesla API
 2025-11-01 18:15:02  INFO       DRY-RUN    #42  2025-11-01 18:13  Humpolec 2   → 75.91 CZK  (75.91  [7.299 kWh @ 10.4 CZK/kWh])
 2025-11-01 18:15:02  INFO       DRY-RUN    #43  2025-11-01 18:17  Humpolec 2   → 114.41 CZK (114.41 [11.001 kWh @ 10.4 CZK/kWh])
@@ -227,7 +228,7 @@ All settings are environment variables. Set them in your `.env` file.
 | `TESLA_EMAIL` | ✅ | — | Tesla account email |
 | `TESLAMATE_DB_PASS` | ✅ | — | TeslaMate PostgreSQL password |
 | `TESLA_CACHE_FILE` | | `/data/tesla_cache.json` | Path to the OAuth token cache inside the container |
-| `TESLA_VIN` | | *(first vehicle)* | VIN to use if you have multiple Teslas |
+| `TESLA_VIN` | ✅ | — | Vehicle VIN to fetch charging history for |
 | `TESLAMATE_DB_HOST` | | `database` | PostgreSQL hostname (Docker service name) |
 | `TESLAMATE_DB_PORT` | | `5432` | PostgreSQL port |
 | `TESLAMATE_DB_NAME` | | `teslamate` | Database name |
@@ -282,7 +283,7 @@ If you see many **NOT FOUND** warnings, try increasing `TIME_TOLERANCE_S` to `30
 | Many `NOT FOUND` warnings | Clock drift or TeslaMate gap in data | Increase `TIME_TOLERANCE_S` to `300` |
 | `Connection refused` on DB | Wrong network or host name | Run `docker network ls` and update the network name in `docker-compose.yml` |
 | Sessions with cost already set are skipped | Expected behaviour | Set `OVERWRITE_EXISTING=true` to force re-import |
-| `TESLA_VIN` ignored | Typo in VIN | Double-check with `docker compose run --rm importer python importer.py --verbose` |
+| No sessions / wrong vehicle | Typo in `TESLA_VIN` | Double-check VIN in Tesla app or TeslaMate, then re-run with `--verbose` |
 
 ---
 

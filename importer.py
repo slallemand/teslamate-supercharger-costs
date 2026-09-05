@@ -71,7 +71,7 @@ def _cfg(key: str, default: str | None = None, required: bool = False) -> str | 
 
 TESLA_EMAIL        = _cfg("TESLA_EMAIL",        required=True)
 TESLA_CACHE_FILE   = _cfg("TESLA_CACHE_FILE",   "/data/tesla_cache.json")
-TESLA_VIN          = _cfg("TESLA_VIN")  # FIX: read at module level so it's always available
+TESLA_VIN          = _cfg("TESLA_VIN",        required=True)
 
 DB_HOST            = _cfg("TESLAMATE_DB_HOST",  "database")
 DB_PORT            = _cfg("TESLAMATE_DB_PORT",  "5432")
@@ -210,28 +210,7 @@ def fetch_charging_sessions(lookback_days: int) -> list[dict]:
             refresh_token = _interactive_auth(tesla)
             tesla.refresh_token(refresh_token=refresh_token)
 
-        vehicles = tesla.vehicle_list()
-        if not vehicles:
-            log.error("No vehicles found in your Tesla account.")
-            sys.exit(1)
-
-        # FIX: honour TESLA_VIN to select the correct vehicle; validate it exists
-        target_vin = TESLA_VIN or vehicles[0]["vin"]
-        vehicle = next((v for v in vehicles if v["vin"] == target_vin), None)
-        if vehicle is None:
-            log.error(
-                f"VIN '{target_vin}' not found in your Tesla account. "
-                f"Available VINs: {[v['vin'] for v in vehicles]}"
-            )
-            sys.exit(1)
-
-        log.info(f"Vehicle: {vehicle.get('display_name', 'N/A')} (VIN: {target_vin})")
-
-        if len(vehicles) > 1 and not TESLA_VIN:
-            log.info(
-                f"  Note: {len(vehicles)} vehicles found. Using the first one. "
-                f"Set TESLA_VIN to select a specific vehicle."
-            )
+        log.info(f"Using configured VIN: {TESLA_VIN}")
 
         log.info(
             f"Fetching charging history for the last {lookback_days} days "
@@ -248,7 +227,7 @@ def fetch_charging_sessions(lookback_days: int) -> list[dict]:
                 # teslapy returns a JsonDict (already parsed) -- NOT a requests.Response.
                 # Do NOT call .raise_for_status() or .json() on the result.
                 response = tesla.get(OWNERSHIP_API_URL, params={
-                    "vin":            target_vin,
+                    "vin":            TESLA_VIN,
                     "deviceLanguage": "en",
                     "deviceCountry":  "US",
                     "operationName":  "getChargingHistoryV2",
